@@ -1,4 +1,4 @@
-The library for simple and fast work with https://esi.evetech.net data.
+The Python 3+ library for simple and fast work with https://esi.evetech.net data.
 This library can: 
 - locally autorize with eve-online user (with gui and without gui interfase)
 - automatically refresh autorization without gui
