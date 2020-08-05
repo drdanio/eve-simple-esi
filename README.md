@@ -114,7 +114,7 @@ how to use:
 	ESI=esi.ESI(settings,callback_saved_data=custom_callback_saved_data)
 	```
 	
-- and your own webserver:
+- and your own webserver class:
 	```python
 	class custom_callback_web_server(address, port):
 		def reg_callback(state_string, on_success_function, on_error_function):
