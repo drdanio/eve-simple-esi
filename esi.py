@@ -22,7 +22,7 @@ class ESIAuthWebServerRequestHandler(BaseHTTPRequestHandler):
 		if not 'state' in query:
 			return
 		state=query['state'][0]
-		if not state in self.server.parent.on_success):
+		if not state in self.server.parent.on_success:
 			return
 		if 'code' in query:
 			self.server.parent.on_success[state](query)
