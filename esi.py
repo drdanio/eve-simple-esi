@@ -529,7 +529,7 @@ class ESI:
 		else:
 			self.print_sso_failure(sso_auth_response)
 
-	def op(self,command,params={},post=False,etag=None):
+	def op(self,command,params={},post=False,etag=None,body=None):
 		pattern = re.compile(r'({[^\}]+})')
 		splitted=pattern.split(command)
 		for i in range(len(splitted)):
@@ -546,11 +546,10 @@ class ESI:
 				return None
 		uri=self.settings['esi_url']+"".join(splitted)
 		uri=self.settings['esi_proto']+uri.replace('//','/')
-		self.p(uri)
-		body=None
+
 		if post:
-			body=params
-			body.update({'token':self.refresh_token})
-			body=urllib.parse.urlencode(body)
-			uri=uri+"?"+body
+			postURI=params
+			postURI.update({'token':self.refresh_token})
+			postURI=urllib.parse.urlencode(body)
+			uri=uri+"?"+postURI
 		return self.send_esi_request_json(uri, etag, body)
