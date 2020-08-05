@@ -25,7 +25,7 @@ how to use:
 	
 - get data:
 	```python
-	ESI.op('/characters/{character_id}/',params={'character_id':2117005244})
+	data=ESI.op('/characters/{character_id}/',params={'character_id':2117005244})
 	```
 	
 - gui autorization:
