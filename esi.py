@@ -551,4 +551,6 @@ class ESI:
 		postURI.update({'token':self.refresh_token})
 		postURI=urllib.parse.urlencode(params)
 		uri=uri+"?"+postURI
+		if post:
+			body=""
 		return self.send_esi_request_json(uri, etag, body)
