@@ -547,9 +547,8 @@ class ESI:
 		uri=self.settings['esi_url']+"".join(splitted)
 		uri=self.settings['esi_proto']+uri.replace('//','/')
 
-		if post:
-			postURI=params
-			postURI.update({'token':self.refresh_token})
-			postURI=urllib.parse.urlencode(body)
-			uri=uri+"?"+postURI
+		postURI=params
+		postURI.update({'token':self.refresh_token})
+		postURI=urllib.parse.urlencode(params)
+		uri=uri+"?"+postURI
 		return self.send_esi_request_json(uri, etag, body)
