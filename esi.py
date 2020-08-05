@@ -19,19 +19,17 @@ from jose.exceptions import ExpiredSignatureError, JWTError, JWTClaimsError
 class ESIAuthWebServerRequestHandler(BaseHTTPRequestHandler):
 	def do_GET(self):
 		query=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-		code=False
-		state=False
+		if not 'state' in query:
+			return
+		state=query['state'][0]
+		if not state in self.server.parent.on_success):
+			return
 		if 'code' in query:
-			code=query['code']
-		if 'state' in query:
-			state=query['state'][0]
-		if ((state) and (state in self.server.parent.on_success)):
-			if code:
-				self.server.parent.on_success[state](query)
-			else:
-				self.server.parent.on_error[state](self.path)
-			del self.server.parent.on_success[state]
-			del self.server.parent.on_error[state]
+			self.server.parent.on_success[state](query)
+		else:
+			self.server.parent.on_error[state](self.path)
+		del self.server.parent.on_success[state]
+		del self.server.parent.on_error[state]
 		if ((len(self.server.parent.on_success) == 0 ) and ( len(self.server.parent.on_error) == 0 )):
 			self.server.shutdown()
 
