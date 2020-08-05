@@ -1,3 +1,4 @@
+# Thanks Qandra-Si (https://github.com/Qandra-Si) for help and basis of implementation
 import urllib
 import requests
 import base64
