@@ -25,13 +25,11 @@ class ESIAuthWebServerRequestHandler(BaseHTTPRequestHandler):
 			code=query['code']
 		if 'state' in query:
 			state=query['state'][0]
-
-		if ((code) and (state) and (state in self.server.parent.on_success) ):
-			self.server.parent.on_success[state](query)
-			del self.server.parent.on_success[state]
-			del self.server.parent.on_error[state]
-		elif ((state) and (state in self.server.parent.on_error)):
-			self.server.parent.on_error[state](self.path)
+		if ((state) and (state in self.server.parent.on_success)):
+			if code:
+				self.server.parent.on_success[state](query)
+			else:
+				self.server.parent.on_error[state](self.path)
 			del self.server.parent.on_success[state]
 			del self.server.parent.on_error[state]
 		if ((len(self.server.parent.on_success) == 0 ) and ( len(self.server.parent.on_error) == 0 )):
