@@ -1,14 +1,17 @@
+# Eve Simple ESI
+
 The Python 3+ library for simple and **fast** work with https://esi.evetech.net data.
 
 `Thanks Qandra-Si ( https://github.com/Qandra-Si ) for help and basis of implementation`
 
-This library can: 
+## This library can:
+
 - locally autorize with eve-online user (with gui and without gui interfase)
 - automatically refresh autorization without gui
 - get data (include data require autorization)
 - post data (include data require autorization)
 
-how to use:
+## how to use:
 
 - **initialization**:
 	```python
