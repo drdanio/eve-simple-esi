@@ -45,6 +45,7 @@ how to use:
 	```python
 	ESI.gui_auth()
 	```
+	The builtin webserver starts only when needed for authorization and automatically shutdown when no authorization jobs found
 	
 - cli autorization:
 	```python
@@ -70,7 +71,7 @@ how to use:
 	```python
 	import esi
 	
-	web_server=esi.ESIAuthWebServer(local_address='localhost', port=8635)
+	web_server=esi.ESIAuthWebServer(local_address='localhost', port=8635) # make one instance of webserver for all ESI instances
 	
 	ESI1=esi.ESI(settings, name="first EVE Character Name", callback_web_server=web_server)
 	ESI2=esi.ESI(settings, callback_web_server=web_server)
