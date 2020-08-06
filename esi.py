@@ -529,6 +529,12 @@ class ESI:
 		else:
 			self.print_sso_failure(sso_auth_response)
 
+	def prepare_obj_to_url(self,obj):
+		for param in obj:
+			if type(obj[param]) == list:
+				obj[param]=self.combine_client_scopes(obj[param])
+		return obj
+
 	def op(self,command,params={},post=False,etag=None,body=None):
 		pattern = re.compile(r'({[^\}]+})')
 		splitted=pattern.split(command)
@@ -549,7 +555,8 @@ class ESI:
 
 		postURI=params
 		postURI.update({'token':self.refresh_token})
-		postURI=urllib.parse.urlencode(params)
+		postURI=self.prepare_obj_to_url(postURI)
+		postURI=urllib.parse.urlencode(postURI)
 		uri=uri+"?"+postURI
 		if post:
 			body=""
