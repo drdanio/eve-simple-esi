@@ -11,11 +11,21 @@ The Python 3+ library for simple and **fast** work with https://esi.evetech.net 
 - get data (include data require autorization)
 - post data (include data require autorization)
 
+## install:
+
+	### pypi:
+	```
+	pip install eve-simple-esi
+	```
+
+	### manual:
+	Just put eve_simple_esi.py to directory with your project
+
 ## how to use:
 
 - **initialization**:
 	```python
-	import esi
+	import eve_simple_esi as esi
 
 	settings={
 		'client_id':"<Client ID>", # go to https://developers.eveonline.com/ create app and get Client ID
@@ -72,7 +82,7 @@ The Python 3+ library for simple and **fast** work with https://esi.evetech.net 
 	
 - use multiplue instance:
 	```python
-	import esi
+	import eve_simple_esi as esi
 	
 	web_server=esi.ESIAuthWebServer(local_address='localhost', port=8635) # make one instance of webserver for all ESI instances
 	
@@ -84,7 +94,7 @@ The Python 3+ library for simple and **fast** work with https://esi.evetech.net 
 
 - fash user switch:
 	```python
-	import esi
+	import eve_simple_esi as esi
 	
 	ESI=esi.ESI(settings, name="first EVE Character Name")
 	data=ESI.op('/characters/{character_id}/')
