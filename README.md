@@ -78,18 +78,25 @@ how to use:
 	ESI3=esi.ESI(settings, callback_web_server=web_server)
 	ESI3.gui_auth()
 	```
+
+- fash user switch:
+	```python
+	import esi
+	
+	ESI=esi.ESI(settings, name="first EVE Character Name")
+	data=ESI.op('/characters/{character_id}/')
+	ESI.get("second EVE Character Name")
+	data=ESI.op('/characters/{character_id}/')
+	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False, 'clear_other_waypoints':False, 'destination_id':30000142}, post=True)
+	ESI.get("third EVE Character Name")
+	data=ESI.op('/characters/{character_id}/')
+	```
 	
 - autoapply self character information if autorized:
 	```python
 	ESI=esi.ESI(settings,name="EVE Character Name")
 	data=ESI.op('/characters/{character_id}/') # data for character_id with "EVE Character Name" name
 	data=ESI.op('/characters/{character_id}/',params={'character_id':2117005244}) # data for character_id: 2117005244
-	```
-	
-- post data:
-	```python
-	ESI=esi.ESI(settings,name="EVE Character Name")
-	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False,'clear_other_waypoints':False,'destination_id':30005015}, post=True)
 	```
 	
 - you also can use your own function to get all messages from ESI class:
