@@ -1,4 +1,4 @@
-The Python 3+ library for simple and fast work with https://esi.evetech.net data.
+The Python 3+ library for simple and **fast** work with https://esi.evetech.net data.
 
 `Thanks Qandra-Si ( https://github.com/Qandra-Si ) for help and basis of implementation`
 
@@ -10,7 +10,7 @@ This library can:
 
 how to use:
 
-- initialization:
+- **initialization**:
 	```python
 	import esi
 
@@ -26,11 +26,21 @@ how to use:
 	ESI=esi.ESI(settings)
 	```
 	
-- get data:
+- **get data**:
 	```python
 	data=ESI.op('/characters/{character_id}/',params={'character_id':2117005244})
 	```
 	
+- **post data**:
+	```python
+	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False, 'clear_other_waypoints':False, 'destination_id':30000142}, post=True)
+	```
+	
+- **post data with body**:
+	```python
+	data=ESI.op('/universe/ids/',body=json.dumps(["Gila","Thrasher","Jita","CCP Alpha"]))
+	```
+
 - gui autorization:
 	```python
 	ESI.gui_auth()
