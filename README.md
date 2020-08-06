@@ -13,13 +13,13 @@ The Python 3+ library for simple and **fast** work with https://esi.evetech.net 
 
 ## install:
 
-	### pypi:
-	```
-	pip install eve-simple-esi
-	```
+### pypi:
+```
+pip install eve-simple-esi
+```
 
-	### manual:
-	Just put eve_simple_esi.py to directory with your project
+### manual:
+Just put eve_simple_esi.py to directory with your project
 
 ## how to use:
 
