@@ -211,7 +211,7 @@ class ESI:
 							self.access_token,
 							jwk_set,
 							algorithms=jwk_set["alg"],
-							issuer=self.settings['esi_proto']+self.settings['login_host']
+							issuer=urllib.parse.urlunparse([self.settings['esi_proto'],self.settings['login_host'],'','','',''])
 						)
 			except JWTClaimsError as e:
 				self.p("The issuer claim was not from login.eveonline.com or "
@@ -226,8 +226,8 @@ class ESI:
 				'token_req_url':"https://login.eveonline.com/v2/oauth/token",
 				'jwks_url':'https://login.eveonline.com/oauth/jwks',
 				'user_agent':"ESI Class 0.1",
-				'esi_url':"esi.evetech.net/latest/",
-				'esi_proto':"https://",
+				'esi_url':"esi.evetech.net/latest",
+				'esi_proto':"https",
 				'scopes':[],
 				'port':8635,
 				'local_address':'localhost'
@@ -550,14 +550,10 @@ class ESI:
 			else:
 				self.p('Error, no variable {} in params'.format(var))
 				return None
-		uri=self.settings['esi_url']+"".join(splitted)
-		uri=self.settings['esi_proto']+uri.replace('//','/')
-
-		postURI=params
-		postURI.update({'token':self.refresh_token})
-		postURI=self.prepare_obj_to_url(postURI)
-		postURI=urllib.parse.urlencode(postURI)
-		uri=uri+"?"+postURI
+		path="".join(splitted)
+		params.update({'token':self.refresh_token})
+		params=self.prepare_obj_to_url(params)
+		uri=urllib.parse.urlunparse([self.settings['esi_proto'],self.settings['esi_url'],path,'',urllib.parse.urlencode(params),''])
 		if post:
 			body=""
 		return self.send_esi_request_json(uri, etag, body)
