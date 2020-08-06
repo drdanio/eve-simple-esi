@@ -15,9 +15,9 @@ how to use:
 	import esi
 
 	settings={
-		'client_id':"<client_id of your esi applocation>", # go to https://developers.eveonline.com/ create app and get Client ID
-		'client_secret':"<client_secret of your esi applocation>", # go to https://developers.eveonline.com/ create app and get Secret Key
-		'client_callback_url':"<callback url>", # default http://localhost:8635/ need to be same as in your app in https://developers.eveonline.com/
+		'client_id':"<Client ID>", # go to https://developers.eveonline.com/ create app and get Client ID
+		'client_secret':"<Secret Key>", # go to https://developers.eveonline.com/ create app and get Secret Key
+		'client_callback_url':"<Callback URL>", # default http://localhost:8635/ need to be same as in your app in https://developers.eveonline.com/
 		'user_agent':"<User Agent string>",
 		'scopes':<list of scopes>, # ['publicData','esi-location.read_location.v1',...etc.]
 		'port':<port for local web server for authorization>, # default 8635
