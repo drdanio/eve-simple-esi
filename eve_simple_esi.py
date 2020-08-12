@@ -384,61 +384,102 @@ class ESI:
 		text = hashlib.md5(text.encode('utf-8')).hexdigest()
 		return str(text)
 
-	def http_return_obj(self,cached,status_code,data,headers):
+	def http_return_obj(self,cached,status_code,data,headers,validated_headers):
 		res={
 			'cached':cached,
 			'data':data,
 			'headers':dict(headers),
 			'status_code':status_code,
 			'consistent':False,
-			'error':False
+			'error':False,
+			'validated_headers':validated_headers
 		}
-		if status_code==304:
+		if ((status_code==304) and (validated_headers)) :
 			res['consistent']=True
 		elif not status_code==200:
 			res['error']=True
 		return res
 
-	def send_cached_data(self, uri, body=None, etag=None, method='GET'):
+
+	def validate_headers(self,headers,validate_array):
+		if validate_array == None:
+			return True
+		responce=True
+		for field in validate_array:
+			if validate_array[field] is None:
+				continue
+			if not field in headers:
+				continue
+			if not validate_array[field] == headers[field]:
+				self.dbg('validate error',[field,validate_array[field],headers[field]])
+				responce=False
+				break
+		return responce
+
+	def set_cache_data(self,uri_hash,content,headers):
+		if self.use_cache:
+			json_content=self.json(content)
+			if json_content:
+				self.cache.Set(uri_hash,{'header':headers,'data':json_content})
+				return True
+		return False
+
+	def get_etag(self,etag,uri_cache):
+		if etag is None:
+			if 'Etag' in uri_cache['header']:
+				etag=uri_cache['header']['Etag']
+		return etag
+
+	def send_cached_data(self, uri, body=None, etag=None, method='GET', validate_array=None):
 		cached=False
 		uri_cache=False
-		if self.use_cache:
-			uri_hash=self.uri_hash(uri)
-			uri_cache=self.cache.Get(uri_hash)
+		uri_hash=self.uri_hash(uri)
+
 		if (not ((body is None) and (method=='GET'))): # For POST/DELETE/PUT requests and if no cache
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			content=data.content
 			headers=data.headers
-		elif not uri_cache:
+
+
+		if self.use_cache:	#Initialize Cache
+			uri_cache=self.cache.Get(uri_hash)
+			validated_headers=False
+			if not uri_cache is None:
+				self.dbg('validating cache data for',uri)
+				validated_headers=self.validate_headers(uri_cache['header'],validate_array)
+			if not validated_headers:
+				uri_cache=False
+
+
+		if not uri_cache:	#Request without cache data
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			content=data.content
 			headers=data.headers
-			if self.use_cache:
-				json_content=self.json(content)
-				if ((json_content) and (data.status_code in [200]) ):
-					self.dbg(uri)
-					self.cache.Set(uri_hash,{'header':headers,'data':json_content})
-		else: # For GET requests with cache
-			if etag is None:
-				#self.p(uri_cache['header'])
-				if 'Etag' in uri_cache['header']:
-					etag=uri_cache['header']['Etag']
+			self.dbg('validating request data for',uri)
+			validated_headers=self.validate_headers(headers,validate_array)
+			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+				self.dbg('Add to cache',uri)
+
+
+		else: # Request with cache data
+			etag=self.get_etag(etag,uri_cache)
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			headers=data.headers
 			content=data.content
-			if ((self.use_cache) and (data.status_code == 304) and (data.headers['Last-Modified']==uri_cache['header']['Last-Modified'])):
+			self.dbg('validating etag data for',uri)
+			validated_headers=self.validate_headers(headers,validate_array)
+
+			if ((data.status_code == 304) and (validated_headers)):
 				cached=True
 				content=json.dumps(uri_cache['data'])
-			elif self.use_cache:
-				json_content=self.json(content)
-				if ((json_content) and (data.status_code in [200]) ):
-					self.dbg(uri)
-					self.cache.Set(uri_hash,{'header':headers,'data':json_content})
 
-		return self.http_return_obj(cached,data.status_code,content,headers)
+			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+				self.dbg('Add to cache',uri)
 
-	def send_cached_json(self, uri, body=None, etag=None, method='GET'):
-		data=self.send_cached_data(uri, body=body, etag=None, method=method)
+		return self.http_return_obj(cached,data.status_code,content,headers,validated_headers)
+
+	def send_cached_json(self, uri, body=None, etag=None, method='GET', validate_array=None):
+		data=self.send_cached_data(uri, body=body, etag=None, method=method, validate_array=validate_array)
 		d=self.json(data['data'])
 		if type(d) is None:
 			return None
@@ -595,7 +636,7 @@ class ESI:
 
 	def error_auth_code(self,query):
 		self.window.destroy()
-		self.dbg(self.path)
+		self.dbg('error_auth_code',query)
 
 	def set_auth_code(self,query):
 		if query['state'][0] == self.unique_state:
@@ -654,66 +695,87 @@ class ESI:
 		uri=urllib.parse.urlunparse([self.settings['esi_proto'],self.settings['esi_url'],path,'',urllib.parse.urlencode(params),''])
 		return uri
 
-
-	def op_single(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False):
+	def op_single(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False, validate_array=None):
 		if post:
 			method="POST"
 		uri=self.param_creator(command,params)
 		if raw:
-			return self.send_cached_data(uri, body=body, etag=etag, method=method)
-		return self.send_cached_json(uri, body=body, etag=etag, method=method)
+			return self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+		return self.send_cached_json(uri, body=body, etag=etag, method=method, validate_array=validate_array)
 
 	def paged_data(self,data,obj):
 		if type(data) is list:
 			return obj+data
 		return obj.append(data)
 
-	def check_consistent(self,pages_count,command,params,method,body):
+	def check_consistent(self,pages_count,command,params,method,body,validate_array=None):
 		consistent=True
 		for i in range(pages_count):
 			page_params=params.copy()
 			page_params['page']=i+1
-			page=self.op_single(command,params=page_params,method=method,etag=None,body=body,raw=True)
+			page=self.op_single(command,params=page_params,method=method,etag=None,body=body,raw=True,validate_array=validate_array)
 			last_header=dict(page['headers'])
 			last_status=page['status_code']
+			last_validated_headers=page['validated_headers']
+
+			if not last_validated_headers:
+				self.dbg(i,['data changed before getted'])
+				consistent=False
+
 			if (not ( page['status_code'] == 304 )):
 				self.dbg(i,['status_code',page['status_code']])
 				consistent=False
-				break
 
 			if not int(page['headers']['X-Pages']) == pages_count:
 				self.dbg(i,['pages_count changed',pages_count,int(page['headers']['X-Pages'])])
 				pages_count=int(page['headers']['X-Pages'])
 				consistent=False
+			
+			if not consistent:
 				break
-		
-			#if not int(page['headers']['Last-Modified']) == pages_count:
-			#if ( not (
-			#	( page['headers']['X-Pages'] == first['headers']['X-Pages']) and 
-			#	( page['headers']['Last-Modified'] == first['headers']['Last-Modified']) 
-			#) ):
-			#	consistent_error=True
-			#	break
-		return {'consistent':consistent,'pages_count':pages_count,'last_header':last_header,'last_status':last_status}
+
+		return {
+			'consistent':consistent,
+			'pages_count':pages_count,
+			'last_header':last_header,
+			'last_status':last_status,
+			'validated_headers':last_validated_headers
+			}
 
 	def get_all_pages(self,first,pages_count,command,params,method,body):
 		result=[]
 		result_hash=[]
 		last_header=dict(first['headers'])
 		last_status=first['status_code']
+		last_validated_headers=False
 		consistent=True
+		
+		validate_array=None
 		for i in range(pages_count):
 			page_params=params.copy()
 			page_params['page']=i+1
 			uri=self.param_creator(command,page_params,token=False)
 			result_hash.append(self.uri_hash(uri))
-			page=self.op_single(command,params=page_params,method=method,body=body, raw=True)
+			page=self.op_single(command,params=page_params,method=method,body=body, raw=True, validate_array=validate_array)
+
+			if i==0: #Make validate_array for first page
+				validate_array=self.make_validate_array(page['headers'])
+
+			last_header=dict(page['headers'])
+			last_status=page['status_code']
+			last_validated_headers=page['validated_headers']
+			consistent=page['consistent']
+
 			data=self.json(page['data'])
 			if type(data) is None:
 				consistent=False
 				break
-			last_header=dict(page['headers'])
-			last_status=page['status_code']
+
+			if not last_validated_headers:
+				self.dbg(i,['data changed before getted'])
+				consistent=False
+				break
+
 			if last_status in [200,304] :
 				if ( (last_status == 200) and (self.use_cache) ):
 					self.dbg(i,last_status)
@@ -722,30 +784,64 @@ class ESI:
 				self.dbg(i,last_status)
 				consistent=False
 				break
-			if not int(page['headers']['X-Pages']) == pages_count:
-				self.dbg(i,['pages_count changed',pages_count,int(page['headers']['X-Pages'])])
-				pages_count=int(page['headers']['X-Pages'])
-				consistent=False
-				break
+
 			if page['error']:
 				data=self.json(page['data'])
 				consistent=False
-			result=self.paged_data(data,result)
 
-		return {'consistent':consistent,'pages_count':pages_count, 'result':result, 'result_hash':result_hash, 'last_header':last_header,'last_status':last_status}
+			result=self.paged_data(data,result)
+			
+
+		return {
+			'consistent':consistent,
+			'pages_count':pages_count, 
+			'result':result, 
+			'result_hash':result_hash, 
+			'last_header':last_header,
+			'last_status':last_status,
+			'validated_headers':last_validated_headers,
+			'validate_array':validate_array
+			}
+
+	def make_validate_array(self,headers):
+		validate_array={
+			'X-Pages':None,
+			'Last-Modified':None,
+		}
+		for field in validate_array:
+			if field in headers:
+				validate_array[field]=headers[field]
+		return validate_array
+
+	def data_returner(self,data,raw):
+		json_data=self.json(data['data'])
+		if not type(json_data) is None:
+			data['data']=json_data
+		if raw:
+			return data
+		return data['data']
 
 	def op(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False,single=False):
-		if ((not post) and (method == "GET") and (single)):
-			return self.op_single(command,params=params,post=post,etag=etag,method=method,body=body,raw=raw)
-
 		if ((post) and (method=="GET")):
 			method="POST"
+
+		if ((method == "GET") and (single)): # Return not paged GET request
+			return self.op_single(command,params=params,post=post,etag=etag,method=method,body=body,raw=raw)
+
 		first=self.op_single(command,params=params,method=method,body=body, raw=True)
 		data=self.json(first['data'])
+
 		if type(data) is None:
-			return None
-		if not 'X-Pages' in first['headers']:
-			return data
+			self.dbg('data is not valid json')
+			return self.data_returner(first,raw)
+
+		if not 'X-Pages' in first['headers']: # Single page responce
+			return self.data_returner(first,raw)
+		
+		if not self.use_cache:
+			self.dbg('cannot get consistented and verified paged data without cache')
+			return self.data_returner(first,raw)
+		
 		pages_count=int(first['headers']['X-Pages'])
 		consistent_try=0
 		consistent=False
@@ -754,33 +850,33 @@ class ESI:
 			consistent=False
 			consistent_try=consistent_try+1
 			self.dbg('get_all_pages')
-			result=self.get_all_pages(first,pages_count,command,params,method,body)
+			result=self.get_all_pages(first,pages_count,command,params,method,body) # Getting data
 			self.cache.Sync()
+
 			if result['consistent']:
 				consistent=True
 				break
 
-			if self.use_cache:
-				self.dbg('check_consistent')
-				check=self.check_consistent(pages_count,command,params,method,body)
-				self.cache.Sync()
-				if not check['consistent']:
-					consistent=False
-					pages_count=check['pages_count']
-					continue
-				consistent=True
-				result['consistent']=check['consistent']
-				result['pages_count']=check['pages_count']
-				result['last_header']=check['last_header']
-				result['last_status']=check['last_status']
+			elif not result['validated_headers']: # Restart request pages if data changed
+				continue
+
+			self.dbg('check_consistent')
+			check=self.check_consistent(pages_count,command,params,method,body,result['validate_array'])
+			self.cache.Sync()
+			if not check['consistent']:
+				consistent=False
+				pages_count=check['pages_count']
+				continue
+			consistent=True
+			result['consistent']=check['consistent']
+			result['pages_count']=check['pages_count']
+			result['last_header']=check['last_header']
+			result['last_status']=check['last_status']
 
 		if consistent:
 			if raw:
-				return self.http_return_obj(self.use_cache,result['last_status'],result['result'],result['last_header'])
+				return self.http_return_obj(self.use_cache,result['last_status'],result['result'],result['last_header'],True)
 			return result['result']
 		
 		self.dbg('Cannot get consistent data')
-		return False
-
-
-
+		return self.http_return_obj(first['cached'],first['status_code'],first['data'],first['headers'],False)
