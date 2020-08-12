@@ -44,17 +44,43 @@ Just put eve_simple_esi.py to directory with your project
 	data=ESI.op('/characters/{character_id}/',params={'character_id':2117005244})
 	```
 	
+- **get multipaged data**:
+	```python
+	data=ESI.op('/characters/{character_id}/assets/') # if cache is enabled you get all data from all pages with Etag and Last-Modified control
+	# 'ESI.max_consistent_try' option can control maximum tries to get valid and consistent data (default 20)
+	```
+	
+- **get forced single page data**:
+	```python
+	data=ESI.op('/characters/{character_id}/assets/',params={'page':6},single=True)
+	```
+	
 - **post data**:
 	```python
-	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False, 'clear_other_waypoints':False, 'destination_id':30000142}, post=True)
+	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False, 'clear_other_waypoints':False, 'destination_id':30000142}, method="POST")
 	```
 	
 - **post data with body**:
 	```python
-	data=ESI.op('/universe/ids/',body=json.dumps(["Gila","Thrasher","Jita","CCP Alpha"]))
+	data=ESI.op('/universe/ids/',body=json.dumps(["Gila","Thrasher","Jita","CCP Alpha"]), method="POST")
 	```
 
-- gui autorization:
+- **put data with body**:
+	```python
+	data=ESI.op('/fleets/{fleet_id}/',params={'fleet_id':123456789},body=json.dumps({"is_free_move": True,"motd": "Fleet now is Free Move"}), method="PUT")
+	```
+	
+- **delete data**:
+	```python
+	data=ESI.op('/fleets/{fleet_id}/members/{member_id}/',params={'fleet_id':123456789,'member_id':987654321}, method="DELETE")
+	```
+	
+- **get data with headers and other fields**:
+	```python
+	data=ESI.op('/characters/{character_id}/', raw=True)
+	```
+	
+- **gui autorization**:
 	```python
 	ESI.gui_auth()
 	```
@@ -147,9 +173,34 @@ Just put eve_simple_esi.py to directory with your project
 	
 - and your own webserver class:
 	```python
-	class custom_callback_web_server(address, port):
+	class custom_callback_web_server:
+		def __init__(self, address, port):
+			...
 		def reg_callback(state_string, on_success_function, on_error_function):
 			...
 		...
 	ESI=esi.ESI(settings,callback_web_server=custom_callback_web_server)
+	```
+
+- and your own cache server class:
+	```python
+	class custom_callback_cache_server:
+		def Get(self,key):
+			#...
+			if key in data:
+				return data
+			else:
+				return None
+		def Del(self,key):
+			#...
+		def Set(self,key,data):
+			#...
+		def Clear(self):
+			#...
+		def Close(self):
+			#...
+		def Sync(self):
+			#...
+	
+	ESI=esi.ESI(settings,callback_cache_server=custom_callback_cache_server)
 	```
