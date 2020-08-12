@@ -17,7 +17,7 @@ from jose.exceptions import ExpiredSignatureError, JWTError, JWTClaimsError
 import shelve
 import hashlib
 
-class ESICacheServer():
+class ESICacheServer:
 	def __init__(self,file_name='cache.db'):
 		self.db_file=file_name
 		self.db=shelve.open(self.db_file)
@@ -37,7 +37,7 @@ class ESICacheServer():
 		self.db.clear()
 
 	def Close(self):
-		self.db.clear()
+		self.db.close()
 
 	def Sync(self):
 		self.db.sync()
