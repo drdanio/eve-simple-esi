@@ -469,7 +469,7 @@ class ESI:
 			self.dbg('validating etag data for',uri)
 			validated_headers=self.validate_headers(headers,validate_array)
 
-			if ((data.status_code == 304) and (validated_headers)):
+			if data.status_code == 304:
 				cached=True
 				content=json.dumps(uri_cache['data'])
 
