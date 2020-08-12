@@ -187,7 +187,7 @@ Just put eve_simple_esi.py to directory with your project
 	class custom_callback_cache_server:
 		def Get(self,key):
 			#...
-			if key in data:
+			if key in cache:
 				return data
 			else:
 				return None
