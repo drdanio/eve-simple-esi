@@ -126,7 +126,7 @@ Just put eve_simple_esi.py to directory with your project
 	data=ESI.op('/characters/{character_id}/')
 	ESI.get("second EVE Character Name")
 	data=ESI.op('/characters/{character_id}/')
-	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False, 'clear_other_waypoints':False, 'destination_id':30000142}, post=True)
+	data=ESI.op('/ui/autopilot/waypoint/',params={'add_to_beginning':False, 'clear_other_waypoints':False, 'destination_id':30000142}, method="POST")
 	ESI.get("third EVE Character Name")
 	data=ESI.op('/characters/{character_id}/')
 	```
