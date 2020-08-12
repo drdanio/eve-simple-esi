@@ -14,7 +14,33 @@ import re
 import os
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError, JWTClaimsError
+import shelve
+import hashlib
 
+class ESICacheServer():
+	def __init__(self,file_name='cache.db'):
+		self.db_file=file_name
+		self.db=shelve.open(self.db_file)
+
+	def Get(self,key):
+		if key in self.db:
+			return self.db[key]
+		return None
+
+	def Del(self,key):
+		del self.db[key]
+
+	def Set(self,key,data):
+		self.db[key]=data
+
+	def Clear(self):
+		self.db.clear()
+
+	def Close(self):
+		self.db.clear()
+
+	def Sync(self):
+		self.db.sync()
 
 class ESIAuthWebServerRequestHandler(BaseHTTPRequestHandler):
 	def do_GET(self):
@@ -93,17 +119,22 @@ class ESI:
 		settings,
 		name=None,
 		gui=True,
+		use_cache=True,
+		max_consistent_try=20,
 		debug=False,
 		callback_print=None,
 		callback_input=None,
 		callback_web_server=None,
-		callback_saved_data=None
+		callback_saved_data=None,
+		callback_cache_server=None
 		):
 		"""Prints the URL to redirect users to.
 		Args:
 			settings: (Required) settings object with client_id, client_secret etc..
 			name: (None) string with name for autoauth storred user
 			gui: (True) bool for prefer auth method
+			use_cache: (True) bool for use cache for requests
+			max_consistent_try: (5) int max try to get consistent list of pages
 			debug: (False) bool for print more data
 			callback_print: (Optional)
 							def callback_print(string):
@@ -130,6 +161,8 @@ class ESI:
 		self.settings=self.configure(settings)
 
 		self.gui = gui
+		self.use_cache = use_cache
+		self.max_consistent_try = max_consistent_try
 
 		self.user_auth={}
 
@@ -160,6 +193,11 @@ class ESI:
 		else:
 			self.web_server=ESIAuthWebServer(local_address=self.settings['local_address'], port=self.settings['port'])
 
+		if callable(callback_cache_server):
+			self.cache=callback_cache_server()
+		else:
+			self.cache=ESICacheServer()
+
 		if callable(callback_saved_data):
 			self.storage=callback_saved_data
 		else:
@@ -167,6 +205,13 @@ class ESI:
 
 		if type(name) == str:
 			self.get(name)
+
+	def dbg(self,data,data2=None):
+		if self.debug:
+			if data2==None:
+				self.p(data)
+			else:
+				self.p(data,data2)
 
 	def validate_eve_jwt(self):
 		
@@ -311,7 +356,7 @@ class ESI:
 			"scope": self.settings['scopes']  # OPTIONAL
 		}
 
-		self.p(form_values)
+		self.dbg(form_values)
 
 		res = self.session.post(
 			self.settings['token_req_url'],
@@ -319,76 +364,169 @@ class ESI:
 			headers=headers,
 		)
 
-		self.p("Request sent to URL {} with headers {} and form values: "
+		self.dbg("Request sent to URL {} with headers {} and form values: "
 			"{}\n".format(res.url, headers, form_values))
 		res.raise_for_status()
 
 		return res
 
-	def send_esi_request_http(self, uri, etag, body=None):
+	def uri_hash(self,uri): # Hash based by user and uri
+		character_name='Unregistered'
+		if 'character_name' in self.user_auth:
+			character_name=self.user_auth['character_name']
+		url=list(urllib.parse.urlsplit(uri))
+		query=urllib.parse.parse_qs(url[3])
+		if 'token' in query:
+			del query['token']
+		url[3]=urllib.parse.urlencode(query)
+		url=urllib.parse.urlunsplit(url)
+		text=character_name + url# + str(hash(str(body)))
+		text = hashlib.md5(text.encode('utf-8')).hexdigest()
+		return str(text)
+
+	def http_return_obj(self,cached,status_code,data,headers,validated_headers):
+		res={
+			'cached':cached,
+			'data':data,
+			'headers':dict(headers),
+			'status_code':status_code,
+			'consistent':False,
+			'error':False,
+			'validated_headers':validated_headers
+		}
+		if ((status_code==304) and (validated_headers)) :
+			res['consistent']=True
+		elif not status_code==200:
+			res['error']=True
+		return res
+
+
+	def validate_headers(self,headers,validate_array):
+		if validate_array == None:
+			return True
+		responce=True
+		for field in validate_array:
+			if validate_array[field] is None:
+				continue
+			if not field in headers:
+				continue
+			if not validate_array[field] == headers[field]:
+				self.dbg('validate error',[field,validate_array[field],headers[field]])
+				responce=False
+				break
+		return responce
+
+	def set_cache_data(self,uri_hash,content,headers):
+		if self.use_cache:
+			json_content=self.json(content)
+			if json_content:
+				self.cache.Set(uri_hash,{'header':headers,'data':json_content})
+				return True
+		return False
+
+	def get_etag(self,etag,uri_cache):
+		if etag is None:
+			if 'Etag' in uri_cache['header']:
+				etag=uri_cache['header']['Etag']
+		return etag
+
+	def send_cached_data(self, uri, body=None, etag=None, method='GET', validate_array=None):
+		cached=False
+		uri_cache=False
+		uri_hash=self.uri_hash(uri)
+
+		if (not ((body is None) and (method=='GET'))): # For POST/DELETE/PUT requests and if no cache
+			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
+			content=data.content
+			headers=data.headers
+
+
+		if self.use_cache:	#Initialize Cache
+			uri_cache=self.cache.Get(uri_hash)
+			validated_headers=False
+			if not uri_cache is None:
+				self.dbg('validating cache data for',uri)
+				validated_headers=self.validate_headers(uri_cache['header'],validate_array)
+			if not validated_headers:
+				uri_cache=False
+
+
+		if not uri_cache:	#Request without cache data
+			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
+			content=data.content
+			headers=data.headers
+			self.dbg('validating request data for',uri)
+			validated_headers=self.validate_headers(headers,validate_array)
+			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+				self.dbg('Add to cache',uri)
+
+
+		else: # Request with cache data
+			etag=self.get_etag(etag,uri_cache)
+			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
+			headers=data.headers
+			content=data.content
+			self.dbg('validating etag data for',uri)
+			validated_headers=self.validate_headers(headers,validate_array)
+
+			if data.status_code == 304:
+				cached=True
+				content=json.dumps(uri_cache['data'])
+
+			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+				self.dbg('Add to cache',uri)
+
+		return self.http_return_obj(cached,data.status_code,content,headers,validated_headers)
+
+	def send_cached_json(self, uri, body=None, etag=None, method='GET', validate_array=None):
+		data=self.send_cached_data(uri, body=body, etag=None, method=method, validate_array=validate_array)
+		d=self.json(data['data'])
+		if type(d) is None:
+			return None
+		return self.json(data['data'])
+
+	def json(self,data):
+		if data == b'':
+			return {}
+		else:
+			try:
+				res=json.loads(data)
+			except:
+				return ['json error:',data.decode('utf-8')]
+			return res
+
+	def send_esi_request_http(self, uri, etag, body=None, method='GET'):
 		headers = {
 			"Authorization": "Bearer {}".format(self.access_token),
 		}
-		if not (etag is None) and (body is None):
+
+		if etag:
 			headers.update({"If-None-Match": etag})
 		if self.settings['user_agent']:
 			headers.update({"User-Agent": self.settings['user_agent']})
+		if ((body) and (method=='GET')):
+			method='POST'
 
 		try:
-			if body is None:
+			if method=='GET':
 				res = self.session.get(uri, headers=headers)
-				if self.debug:
-					self.p("\nMade GET request to {} with headers: "
-							"{}\nAnd the answer {} was received with "
-							"headers {} and encoding {}".
-							format(uri,
-									res.request.headers,
-									res.status_code,
-									res.headers,
-									res.encoding))
-			else:
+			elif method=='POST':
 				headers.update({"Content-Type": "application/json"})
 				res = self.session.post(uri, data=body, headers=headers)
-				if self.debug:
-					self.p("\nMade POST request to {} with data {} and headers: "
-							"{}\nAnd the answer {} was received with "
-							"headers {} and encoding {}".
-							format(uri,
-									body,
-									res.request.headers,
-									res.status_code,
-									res.headers,
-									res.encoding))
-			res.raise_for_status()
-		except requests.exceptions.HTTPError as err:
-			self.p(err)
-			json_error=res.json()
-			self.p(json_error)
-			if ((json_error) and (json_error['error']=='token is expired')):
+			elif method=='PUT':
+				headers.update({"Content-Type": "application/json"})
+				res = self.session.put(uri, data=body, headers=headers)
+			elif method=='DELETE':
+				res = self.session.delete(uri, headers=headers)
+			if res.status_code==401:
 				self.re_auth()
-				return self.send_esi_request_http(uri, etag, body)
-			else:
-				return res
-			#raise
+				res=self.send_esi_request_http(uri, etag, body, method)
+			#if body is None:
+			#	res = self.session.get(uri, headers=headers)
+			return res
 		except:
 			self.p(sys.exc_info())
-			#raise
-
-		#debug = str(res.status_code) + " " + uri[31:]
-		#if ('Last-Modified' in res.headers):
-		#    debug = debug + " " + str(res.headers['Last-Modified'])[17:-4]
-		#if ('Etag' in res.headers):
-		#    debug = debug + " " + str(res.headers['Etag'])
-		#print(debug)
-
-		return res
-
-	def send_esi_request_json(self, uri, etag, body=None):
-		res=self.send_esi_request_http(uri, etag, body)
-		if res.content == b'':
-			return {}
-		else:
-			return res.json()
+			raise 
 
 	def print_sso_failure(self, sso_response):
 		self.p("\nSomething went wrong! Here's some debug info to help you out:")
@@ -402,9 +540,8 @@ class ESI:
 
 	def auth(self):
 		self.p("Follow the prompts and enter the info asked for.")
-		self.p(self.auth_url(code_challenge=self.create_code_challenge()))
-
-		self.auth_code = self.i("Copy the \"code\" query parameter and enter it here: ")
+		url=self.auth_url(code_challenge=self.create_code_challenge())
+		self.auth_code = self.i(url+"\nCopy the \"code\" query parameter and enter it here: ")
 		return self.auth_part2()
 
 	def create_code_challenge(self):
@@ -416,12 +553,10 @@ class ESI:
 		return code_challenge
 
 	def gui_auth(self):
-		self.p("Follow the prompts and enter the info asked for.")
+		self.dbg("gui_auth")
 		self.auth_url(code_challenge=self.create_code_challenge())
 		self.web_server.reg_callback(state=self.unique_state, on_success=self.success_auth_code, on_error=self.error_auth_code)
 		return self.open_url()
-
-		#auth_code = input("Copy the \"code\" query parameter and enter it here: ")	#Webserver and browser here
 
 	def auth_part2(self):
 		code_verifier = self.random
@@ -447,7 +582,7 @@ class ESI:
 
 	def validate_auth(self):
 		validated_jwt = self.validate_eve_jwt()
-		self.p("\nThe contents of the access token are: {}".format(validated_jwt))
+		self.dbg("\nThe contents of the access token are: {}".format(validated_jwt))
 		self.character_id = validated_jwt["sub"].split(":")[2]
 		self.character_name = validated_jwt["name"]
 		self.expired = validated_jwt["exp"]
@@ -470,7 +605,7 @@ class ESI:
 	def get(self,char_name):
 		self.user_auth=self.storage.read(char_name)
 		if not self.user_auth == None:
-			self.p('Character data readed')
+			self.dbg('Character data readed')
 			self.access_token=self.user_auth['access_token']
 			self.refresh_token=self.user_auth['refresh_token']
 			self.expired=self.user_auth['expired']
@@ -501,13 +636,13 @@ class ESI:
 
 	def error_auth_code(self,query):
 		self.window.destroy()
-		self.p(self.path)
+		self.dbg('error_auth_code',query)
 
 	def set_auth_code(self,query):
 		if query['state'][0] == self.unique_state:
-			self.p('Authorization server valid')
+			self.dbg('Authorization server valid')
 		self.auth_code=query['code']
-		self.p(self.auth_part2())
+		self.dbg(self.auth_part2())
 
 	def re_auth(self):
 		if self.refresh_token == '':
@@ -535,7 +670,10 @@ class ESI:
 				obj[param]=self.combine_client_scopes(obj[param])
 		return obj
 
-	def op(self,command,params={},post=False,etag=None,body=None):
+	def clear_cache(self):
+		self.cache.Clear()
+
+	def param_creator(self,command,params,token=True):
 		pattern = re.compile(r'({[^\}]+})')
 		splitted=pattern.split(command)
 		for i in range(len(splitted)):
@@ -548,12 +686,197 @@ class ESI:
 			elif var in self.user_auth:
 				splitted[i]=str(self.user_auth[var])
 			else:
-				self.p('Error, no variable {} in params'.format(var))
-				return None
+				self.dbg('Error, no variable {} in params'.format(var))
+				raise
 		path="".join(splitted)
-		params.update({'token':self.refresh_token})
+		if token:
+			params.update({'token':self.refresh_token})
 		params=self.prepare_obj_to_url(params)
 		uri=urllib.parse.urlunparse([self.settings['esi_proto'],self.settings['esi_url'],path,'',urllib.parse.urlencode(params),''])
+		return uri
+
+	def op_single(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False, validate_array=None):
 		if post:
-			body=""
-		return self.send_esi_request_json(uri, etag, body)
+			method="POST"
+		uri=self.param_creator(command,params)
+		if raw:
+			return self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+		return self.send_cached_json(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+
+	def paged_data(self,data,obj):
+		if type(data) is list:
+			return obj+data
+		return obj.append(data)
+
+	def check_consistent(self,pages_count,command,params,method,body,validate_array=None):
+		consistent=True
+		for i in range(pages_count):
+			page_params=params.copy()
+			page_params['page']=i+1
+			page=self.op_single(command,params=page_params,method=method,etag=None,body=body,raw=True,validate_array=validate_array)
+			last_header=dict(page['headers'])
+			last_status=page['status_code']
+			last_validated_headers=page['validated_headers']
+
+			if not last_validated_headers:
+				self.dbg(i,['data changed before getted'])
+				consistent=False
+
+			if (not ( page['status_code'] == 304 )):
+				self.dbg(i,['status_code',page['status_code']])
+				consistent=False
+
+			if not int(page['headers']['X-Pages']) == pages_count:
+				self.dbg(i,['pages_count changed',pages_count,int(page['headers']['X-Pages'])])
+				pages_count=int(page['headers']['X-Pages'])
+				consistent=False
+			
+			if not consistent:
+				break
+
+		return {
+			'consistent':consistent,
+			'pages_count':pages_count,
+			'last_header':last_header,
+			'last_status':last_status,
+			'validated_headers':last_validated_headers
+			}
+
+	def get_all_pages(self,first,pages_count,command,params,method,body):
+		result=[]
+		result_hash=[]
+		last_header=dict(first['headers'])
+		last_status=first['status_code']
+		last_validated_headers=False
+		consistent=True
+		
+		validate_array=None
+		for i in range(pages_count):
+			page_params=params.copy()
+			page_params['page']=i+1
+			uri=self.param_creator(command,page_params,token=False)
+			result_hash.append(self.uri_hash(uri))
+			page=self.op_single(command,params=page_params,method=method,body=body, raw=True, validate_array=validate_array)
+
+			if i==0: #Make validate_array for first page
+				validate_array=self.make_validate_array(page['headers'])
+
+			last_header=dict(page['headers'])
+			last_status=page['status_code']
+			last_validated_headers=page['validated_headers']
+			consistent=page['consistent']
+
+			data=self.json(page['data'])
+			if type(data) is None:
+				consistent=False
+				break
+
+			if not last_validated_headers:
+				self.dbg(i,['data changed before getted'])
+				consistent=False
+				break
+
+			if last_status in [200,304] :
+				if ( (last_status == 200) and (self.use_cache) ):
+					self.dbg(i,last_status)
+					consistent=False
+			else:
+				self.dbg(i,last_status)
+				consistent=False
+				break
+
+			if page['error']:
+				data=self.json(page['data'])
+				consistent=False
+
+			result=self.paged_data(data,result)
+			
+
+		return {
+			'consistent':consistent,
+			'pages_count':pages_count, 
+			'result':result, 
+			'result_hash':result_hash, 
+			'last_header':last_header,
+			'last_status':last_status,
+			'validated_headers':last_validated_headers,
+			'validate_array':validate_array
+			}
+
+	def make_validate_array(self,headers):
+		validate_array={
+			'X-Pages':None,
+			'Last-Modified':None,
+		}
+		for field in validate_array:
+			if field in headers:
+				validate_array[field]=headers[field]
+		return validate_array
+
+	def data_returner(self,data,raw):
+		json_data=self.json(data['data'])
+		if not type(json_data) is None:
+			data['data']=json_data
+		if raw:
+			return data
+		return data['data']
+
+	def op(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False,single=False):
+		if ((post) and (method=="GET")):
+			method="POST"
+
+		if ((method == "GET") and (single)): # Return not paged GET request
+			return self.op_single(command,params=params,post=post,etag=etag,method=method,body=body,raw=raw)
+
+		first=self.op_single(command,params=params,method=method,body=body, raw=True)
+		data=self.json(first['data'])
+
+		if type(data) is None:
+			self.dbg('data is not valid json')
+			return self.data_returner(first,raw)
+
+		if not 'X-Pages' in first['headers']: # Single page responce
+			return self.data_returner(first,raw)
+		
+		if not self.use_cache:
+			self.dbg('cannot get consistented and verified paged data without cache')
+			return self.data_returner(first,raw)
+		
+		pages_count=int(first['headers']['X-Pages'])
+		consistent_try=0
+		consistent=False
+		result={'consistent':False,'pages_count':pages_count, 'result':[], 'result_hash':[], 'last_header':dict(first['headers']),'last_status':first['status_code']}
+		while ( (not consistent) and (consistent_try < self.max_consistent_try)):
+			consistent=False
+			consistent_try=consistent_try+1
+			self.dbg('get_all_pages')
+			result=self.get_all_pages(first,pages_count,command,params,method,body) # Getting data
+			self.cache.Sync()
+
+			if result['consistent']:
+				consistent=True
+				break
+
+			elif not result['validated_headers']: # Restart request pages if data changed
+				continue
+
+			self.dbg('check_consistent')
+			check=self.check_consistent(pages_count,command,params,method,body,result['validate_array'])
+			self.cache.Sync()
+			if not check['consistent']:
+				consistent=False
+				pages_count=check['pages_count']
+				continue
+			consistent=True
+			result['consistent']=check['consistent']
+			result['pages_count']=check['pages_count']
+			result['last_header']=check['last_header']
+			result['last_status']=check['last_status']
+
+		if consistent:
+			if raw:
+				return self.http_return_obj(self.use_cache,result['last_status'],result['result'],result['last_header'],True)
+			return result['result']
+		
+		self.dbg('Cannot get consistent data')
+		return self.http_return_obj(first['cached'],first['status_code'],first['data'],first['headers'],False)
