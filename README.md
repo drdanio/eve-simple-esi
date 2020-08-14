@@ -204,7 +204,6 @@ Just put eve_simple_esi.py to directory with your project
 			'map':{
 				'corporation_id':{
 					'get':'/corporations/{corporation_id}/industry/jobs/',
-					'flags':['force_cache'],
 					'map':{
 						'product_type_id':{
 							'link':'type_id',
