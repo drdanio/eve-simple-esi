@@ -134,7 +134,7 @@ Just put eve_simple_esi.py to directory with your project
 	**examples**
 	- get character data:
 		```python
-		complicated_map:{
+		complicated_map={
 			'get':'/characters/{character_id}/',
 			'map':{
 				'alliance_id':{
@@ -198,7 +198,7 @@ Just put eve_simple_esi.py to directory with your project
 		```
 	- get corporate industry jobs:
 		```python
-		complicated_map:{
+		complicated_map={
 			'get':'/characters/{character_id}/',
 			'flags':['force_cache'],
 			'map':{
