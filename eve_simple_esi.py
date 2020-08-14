@@ -33,8 +33,15 @@ class ESICacheServer:
 	def Set(self,key,data):
 		self.db[key]=data
 
-	def Clear(self):
-		self.db.clear()
+	def Clear(self,force=False):
+		if force:
+			self.db.close()
+			exts=['bak','dat','dir']
+			for ext in exts:
+				os.remove(self.db_file+"."+ext)
+			self.db=shelve.open(self.db_file)
+		else:
+			self.db.clear()
 
 	def Close(self):
 		self.db.close()
@@ -134,7 +141,7 @@ class ESI:
 			name: (None) string with name for autoauth storred user
 			gui: (True) bool for prefer auth method
 			use_cache: (True) bool for use cache for requests
-			max_consistent_try: (5) int max try to get consistent list of pages
+			max_consistent_try: (20) int max try to get consistent list of pages
 			debug: (False) bool for print more data
 			callback_print: (Optional)
 							def callback_print(string):
@@ -162,7 +169,11 @@ class ESI:
 
 		self.gui = gui
 		self.use_cache = use_cache
+		
 		self.max_consistent_try = max_consistent_try
+
+		self.force_cache = False
+		self.repeat_max_try = 5
 
 		self.user_auth={}
 
@@ -174,6 +185,8 @@ class ESI:
 		self.random = ''
 		self.unique_state = ''
 
+		self.last_map_action=None
+		self.last_map_action_priority=['stop','skip']
 		self.window = None
 		self.WebServer = None
 
@@ -400,7 +413,6 @@ class ESI:
 			res['error']=True
 		return res
 
-
 	def validate_headers(self,headers,validate_array):
 		if validate_array == None:
 			return True
@@ -451,32 +463,39 @@ class ESI:
 				uri_cache=False
 
 
-		if not uri_cache:	#Request without cache data
+		if not uri_cache:	# Request without cache data
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			content=data.content
 			headers=data.headers
+			status_code=data.status_code
 			self.dbg('validating request data for',uri)
 			validated_headers=self.validate_headers(headers,validate_array)
-			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+			if ((status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
 				self.dbg('Add to cache',uri)
 
+		elif self.force_cache:	# Return data from cache without check
+			status_code=304
+			cached=True
+			content=json.dumps(uri_cache['data'])
+			headers=uri_cache['header']
 
 		else: # Request with cache data
 			etag=self.get_etag(etag,uri_cache)
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			headers=data.headers
 			content=data.content
+			status_code=data.status_code
 			self.dbg('validating etag data for',uri)
 			validated_headers=self.validate_headers(headers,validate_array)
 
-			if data.status_code == 304:
+			if status_code == 304:
 				cached=True
 				content=json.dumps(uri_cache['data'])
 
-			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+			if ((status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
 				self.dbg('Add to cache',uri)
 
-		return self.http_return_obj(cached,data.status_code,content,headers,validated_headers)
+		return self.http_return_obj(cached,status_code,content,headers,validated_headers)
 
 	def send_cached_json(self, uri, body=None, etag=None, method='GET', validate_array=None):
 		data=self.send_cached_data(uri, body=body, etag=None, method=method, validate_array=validate_array)
@@ -492,7 +511,7 @@ class ESI:
 			try:
 				res=json.loads(data)
 			except:
-				return ['json error:',data.decode('utf-8')]
+				return ('json_error',data.decode('utf-8'))
 			return res
 
 	def send_esi_request_http(self, uri, etag, body=None, method='GET'):
@@ -696,12 +715,21 @@ class ESI:
 		return uri
 
 	def op_single(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False, validate_array=None):
-		if post:
-			method="POST"
-		uri=self.param_creator(command,params)
-		if raw:
-			return self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
-		return self.send_cached_json(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+		result=None
+		#i=0
+		for i in range(self.repeat_max_try):
+			if post:
+				method="POST"
+			uri=self.param_creator(command,params)
+			if raw:
+				result=self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+				if not result['error']:
+					return self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+			else:
+				result=self.send_cached_json(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+				if not type(result) is tuple:
+					return result
+		return result
 
 	def paged_data(self,data,obj):
 		if type(data) is list:
@@ -820,6 +848,158 @@ class ESI:
 		if raw:
 			return data
 		return data['data']
+
+	def list_filters_fields(self,data,query_array):
+		for query in query_array:
+			if self.list_filters_field(data,query[0],query[1],query[2]):
+				last_map_action=query[3]
+				if self.last_map_action == None:
+					self.last_map_action=last_map_action
+				elif self.last_map_action_priority.index(self.last_map_action) > self.last_map_action_priority.index(last_map_action):
+						self.last_map_action=last_map_action
+					
+
+	def list_filters_field(self,data,field_name,operator,compared_data):
+		if field_name in data:
+			if operator == '==':
+				return data[field_name] == compared_data
+			elif operator == '!=':
+				return (not (data[field_name] == compared_data))
+			elif operator == '>':
+				return data[field_name] > compared_data
+			elif operator == '<':
+				return data[field_name] < compared_data
+			elif operator == '>=':
+				return data[field_name] >= compared_data
+			elif operator == '<=':
+				return data[field_name] <= compared_data
+			elif operator == 'in':
+				return data[field_name] in compared_data
+			elif operator == 'not in':
+				return (not (data[field_name] in compared_data))
+			elif operator == 'startswith':
+				return data[field_name].startswith(compared_data)
+			elif operator == 'endswith':
+				return data[field_name].endswith(compared_data)
+			elif operator == 're':
+				return (not (compared_data.match(data[field_name]) == None))
+		return False
+
+	def map_obj (self,data,obj):
+		return_data={}
+		if self.last_map_action in ['skip','stop']:
+			return return_data
+
+		if 'fields' in obj:
+			if type(obj['fields']) is list:
+				for field in obj['fields']:
+					if field in data:
+						return_data[field]=data[field]
+			else:
+				return data[obj['fields']]
+
+		if self.last_map_action == 'stop':
+			return return_data
+
+		if 'id' in obj:
+			if (('params' in obj) and (obj['id'] in obj['params'])):
+				return_data.update({obj['id']:obj['params'][obj['id']]})
+			elif obj['id'] in self.user_auth:
+				return_data.update({obj['id']:self.user_auth[obj['id']]})
+		if 'map' in obj:
+			for field in obj['map']:
+				n_param=data.copy()
+				new_obj=obj['map'][field].copy()
+				
+				if 'link' in obj['map'][field]:
+					n_param[obj['map'][field]['link']]=n_param[field]
+					new_obj['id']=new_obj['link']
+					del n_param[field]
+					del new_obj['link']
+				else:
+					new_obj['id']=field
+					
+				if 'params' in obj['map'][field]:
+					n_param.update(obj['map'][field]['params'])
+					del new_obj['params']
+
+				new_obj['params']=n_param
+				if self.last_map_action == 'stop':
+					return return_data
+				if 'name' in obj['map'][field]:
+					return_data[obj['map'][field]['name']]=self.map(new_obj,first=False)
+				else:
+					return_data[field]=self.map(new_obj,first=False)
+		return return_data
+
+	def map_list (self,data,obj):
+		return_data=[]
+		
+		for field in data:
+			if 'list_filters' in obj:
+				self.list_filters_fields(field,obj['list_filters'])
+			if self.last_map_action == 'stop':
+				return return_data
+			if self.last_map_action == 'skip':
+				self.last_map_action=None
+				continue
+			return_data.append(self.map_check(field,obj))
+		return return_data
+
+	def map_check (self,data,obj):
+		if self.last_map_action == 'stop':
+			return None
+		if type(data) is dict:
+			return_data=self.map_obj(data,obj)
+		elif type(data) is list:
+			return_data=self.map_list(data,obj)
+		elif 'link' in obj:
+			new_obj=obj.copy()
+			if not 'params' in obj:
+				new_obj['params']={}
+			new_obj['params'][obj['link']]=data
+			return_data=self.map(new_obj,first=False)
+		else:
+			return_data=data
+		return return_data
+
+	def make_flags(self,flags):
+		self_flags=dir(self)
+		prev_state={}
+		for flag in flags:
+			if flag in self_flags:
+				prev_state[flag]=getattr(self,flag)
+				setattr(self,flag,True)
+		return prev_state
+
+	def return_state(self,flags):
+		self_flags=dir(self)
+		for flag in flags:
+			if flag in self_flags:
+				setattr(self,flag,flags[flag])
+
+	def map (self,obj,first=True):
+		params={}
+		if 'params' in obj:
+			params=obj['params']
+		command=None
+		method="GET"
+		if 'get' in obj:
+			command=obj['get']
+			method="GET"
+		prev_state={}
+		if 'flags' in obj:
+			prev_state=self.make_flags(obj['flags'])
+
+		data=self.op(command,params=params,method=method)
+
+		if 'flags' in obj:
+			self.return_state(prev_state)
+		return_data=self.map_check(data,obj)
+		if first:
+			print(self.last_map_action)
+			self.last_map_action=None
+		return return_data
 
 	def op(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False,single=False):
 		if ((post) and (method=="GET")):
