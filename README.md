@@ -132,7 +132,7 @@ Just put eve_simple_esi.py to directory with your project
 	'stop'		# skip current row, immediatley return collected data and stop
 	```
 	**examples**
-	- get character data:
+	- **get character data**:
 		```python
 		complicated_map={
 			'get':'/characters/{character_id}/',
@@ -196,7 +196,7 @@ Just put eve_simple_esi.py to directory with your project
 			}
 		}
 		```
-	- get corporate industry jobs:
+	- **get corporate industry jobs**:
 		```python
 		complicated_map={
 			'get':'/characters/{character_id}/',
