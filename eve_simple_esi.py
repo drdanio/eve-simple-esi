@@ -717,10 +717,14 @@ class ESI:
 
 	def op_single(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False, validate_array=None):
 		result=None
-		#i=0
-		for i in range(self.repeat_max_try):
+		repeat=True
+		i=0
+		while ((i < self.repeat_max_try) and (repeat==True)):
+			i=i+1
 			if post:
 				method="POST"
+			if not method=="GET":
+				repeat=False
 			uri=self.param_creator(command,params)
 			if raw:
 				result=self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
