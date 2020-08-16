@@ -451,7 +451,8 @@ class ESI:
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			content=data.content
 			headers=data.headers
-
+			status_code=data.status_code
+			return self.http_return_obj(False,status_code,content,headers,True)
 
 		if self.use_cache:	#Initialize Cache
 			uri_cache=self.cache.Get(uri_hash)
@@ -692,7 +693,7 @@ class ESI:
 	def clear_cache(self):
 		self.cache.Clear()
 
-	def param_creator(self,command,params,token=True):
+	def param_creator(self,command,params,token=False):
 		pattern = re.compile(r'({[^\}]+})')
 		splitted=pattern.split(command)
 		for i in range(len(splitted)):
@@ -1009,6 +1010,7 @@ class ESI:
 			return self.op_single(command,params=params,post=post,etag=etag,method=method,body=body,raw=raw)
 
 		first=self.op_single(command,params=params,method=method,body=body, raw=True)
+
 		data=self.json(first['data'])
 
 		if type(data) is None:
