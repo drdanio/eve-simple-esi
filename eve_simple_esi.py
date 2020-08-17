@@ -16,6 +16,7 @@ from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError, JWTClaimsError
 import shelve
 import hashlib
+import win32gui
 
 class ESICacheServer:
 	def __init__(self,file_name='cache.db'):
@@ -121,6 +122,18 @@ class ESIUserDataStorage:
 		with open(file_name, "w+") as f:
 			json.dump(data,f,indent=self.indent)
 
+class ESIGUIWindow:
+	def __init__(self):
+		self.guilib = webview.initialize(None)
+	
+	def show(self,title, url=None, html=None, js_api=None, width=580, height=1024, x=None, y=None, resizable=True, fullscreen=False, min_size=(200, 100), hidden=False, frameless=False, easy_drag=True, minimized=False, on_top=True, confirm_close=False, background_color='#FFFFFF', transparent=False, text_select=False):
+		self.window=webview.create_window(title,url=url, html=html, js_api=js_api, width=width, height=height, x=x, y=y, resizable=resizable, fullscreen=fullscreen, min_size=min_size, hidden=hidden, frameless=frameless, easy_drag=easy_drag, minimized=minimized, on_top=on_top, confirm_close=confirm_close, background_color=background_color, transparent=transparent, text_select=text_select) #580 x 1024
+		self.window._initialize(self.guilib, False, False)
+		self.guilib.create_window(self.window)
+
+	def destroy(self):
+		self.window.destroy()
+
 class ESI:
 	def __init__(self,
 		settings,
@@ -133,7 +146,8 @@ class ESI:
 		callback_input=None,
 		callback_web_server=None,
 		callback_saved_data=None,
-		callback_cache_server=None
+		callback_cache_server=None,
+		callback_gui_window_class=None
 		):
 		"""Prints the URL to redirect users to.
 		Args:
@@ -164,6 +178,29 @@ class ESI:
 								def write(char_name,data):
 									saved_data=json.dumps(data)
 									...
+			callback_cache_server: (Optional)
+							class callback_cache_server:
+								def Get(key):
+									...
+									return cache[key]
+								def Set(key,data):
+									...
+									cache[key]=data
+								def Del(key):
+									...
+								def Clear():
+									...
+								def Sync():
+									...
+								def Close():
+									...
+			callback_gui_window_class:
+							class callback_gui_window_class:
+								def show(title,url):
+									...
+								def destroy()
+									...
+
 		"""
 		self.settings=self.configure(settings)
 
@@ -215,6 +252,11 @@ class ESI:
 			self.storage=callback_saved_data
 		else:
 			self.storage=ESIUserDataStorage()
+
+		if callable(callback_gui_window_class):
+			self.window=callback_gui_window_class
+		else:
+			self.window=ESIGUIWindow()
 
 		if type(name) == str:
 			self.get(name)
@@ -283,7 +325,8 @@ class ESI:
 				'base_auth_url':"https://login.eveonline.com/v2/oauth/authorize/",
 				'token_req_url':"https://login.eveonline.com/v2/oauth/token",
 				'jwks_url':'https://login.eveonline.com/oauth/jwks',
-				'user_agent':"ESI Class 0.1",
+				'gui_auth_window_name':'Login in EVE',
+				'user_agent':"eve-simple-esi library",
 				'esi_url':"esi.evetech.net/latest",
 				'esi_proto':"https",
 				'scopes':[],
@@ -641,11 +684,15 @@ class ESI:
 			return self.auth()
 		return None
 
-	def open_url(self):
-		self.window=webview.create_window('Auth', self.full_auth_url, width=580, height=1024) #580 x 1024
-		webview.start()
+	def stop_web_server(self):
 		if self.WebServer:
 			self.WebServer.shutdown()
+
+	def open_url(self):
+		self.window.show(self.settings['gui_auth_window_name'], self.full_auth_url)
+
+		self.stop_web_server()
+
 		if self.auth_code == '':
 			return False
 		return True
@@ -707,7 +754,7 @@ class ESI:
 				splitted[i]=str(self.user_auth[var])
 			else:
 				self.dbg('Error, no variable {} in params'.format(var))
-				raise
+				return None
 		path="".join(splitted)
 		if token:
 			params.update({'token':self.refresh_token})
@@ -726,6 +773,8 @@ class ESI:
 			if not method=="GET":
 				repeat=False
 			uri=self.param_creator(command,params)
+			if uri is None:
+				return None
 			if raw:
 				result=self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
 				if not result['error']:
@@ -788,6 +837,8 @@ class ESI:
 			page_params=params.copy()
 			page_params['page']=i+1
 			uri=self.param_creator(command,page_params,token=False)
+			if uri is None:
+				return None
 			result_hash.append(self.uri_hash(uri))
 			page=self.op_single(command,params=page_params,method=method,body=body, raw=True, validate_array=validate_array)
 
@@ -1014,7 +1065,8 @@ class ESI:
 			return self.op_single(command,params=params,post=post,etag=etag,method=method,body=body,raw=raw)
 
 		first=self.op_single(command,params=params,method=method,body=body, raw=True)
-
+		if first is None:
+			return None
 		data=self.json(first['data'])
 
 		if type(data) is None:
