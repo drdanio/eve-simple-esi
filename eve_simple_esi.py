@@ -1051,6 +1051,16 @@ class ESI:
 			prev_state=self.make_flags(obj['flags'])
 		data=self.op(command,params=params,method=method)
 
+		error_try=0
+		while (type(data) is list) and (len(data) > 0) and (data[0]=="json_error") and (error_try<self.repeat_max_try):
+			invert_cache=self.force_cache
+			if invert_cache:
+				self.force_cache=False
+			data=self.op(command,params=params,method=method)
+			if invert_cache:
+				self.force_cache=True
+			error_try=error_try+1
+
 		if 'flags' in obj:
 			self.return_state(prev_state)
 		return_data=self.map_check(data,obj)
