@@ -964,7 +964,11 @@ class ESI:
 				return_data.update({obj['id']:self.user_auth[obj['id']]})
 		if 'map' in obj:
 			for field in obj['map']:
-				n_param=data.copy()
+				if not (field in data):
+					continue
+				n_param={}
+				if field in data:
+					n_param[field]=data[field]
 				new_obj=obj['map'][field].copy()
 				
 				if 'link' in obj['map'][field]:
@@ -1046,14 +1050,12 @@ class ESI:
 		prev_state={}
 		if 'flags' in obj:
 			prev_state=self.make_flags(obj['flags'])
-
 		data=self.op(command,params=params,method=method)
 
 		if 'flags' in obj:
 			self.return_state(prev_state)
 		return_data=self.map_check(data,obj)
 		if first:
-			print(self.last_map_action)
 			self.last_map_action=None
 		return return_data
 
