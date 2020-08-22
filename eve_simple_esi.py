@@ -16,6 +16,7 @@ from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError, JWTClaimsError
 import shelve
 import hashlib
+import win32gui
 
 class ESICacheServer:
 	def __init__(self,file_name='cache.db'):
@@ -33,8 +34,15 @@ class ESICacheServer:
 	def Set(self,key,data):
 		self.db[key]=data
 
-	def Clear(self):
-		self.db.clear()
+	def Clear(self,force=False):
+		if force:
+			self.db.close()
+			exts=['bak','dat','dir']
+			for ext in exts:
+				os.remove(self.db_file+"."+ext)
+			self.db=shelve.open(self.db_file)
+		else:
+			self.db.clear()
 
 	def Close(self):
 		self.db.close()
@@ -114,6 +122,18 @@ class ESIUserDataStorage:
 		with open(file_name, "w+") as f:
 			json.dump(data,f,indent=self.indent)
 
+class ESIGUIWindow:
+	def __init__(self):
+		self.guilib = webview.initialize(None)
+	
+	def show(self,title, url=None, html=None, js_api=None, width=580, height=1024, x=None, y=None, resizable=True, fullscreen=False, min_size=(200, 100), hidden=False, frameless=False, easy_drag=True, minimized=False, on_top=True, confirm_close=False, background_color='#FFFFFF', transparent=False, text_select=False):
+		self.window=webview.create_window(title,url=url, html=html, js_api=js_api, width=width, height=height, x=x, y=y, resizable=resizable, fullscreen=fullscreen, min_size=min_size, hidden=hidden, frameless=frameless, easy_drag=easy_drag, minimized=minimized, on_top=on_top, confirm_close=confirm_close, background_color=background_color, transparent=transparent, text_select=text_select) #580 x 1024
+		self.window._initialize(self.guilib, False, False)
+		self.guilib.create_window(self.window)
+
+	def destroy(self):
+		self.window.destroy()
+
 class ESI:
 	def __init__(self,
 		settings,
@@ -126,7 +146,8 @@ class ESI:
 		callback_input=None,
 		callback_web_server=None,
 		callback_saved_data=None,
-		callback_cache_server=None
+		callback_cache_server=None,
+		callback_gui_window_class=None
 		):
 		"""Prints the URL to redirect users to.
 		Args:
@@ -134,7 +155,7 @@ class ESI:
 			name: (None) string with name for autoauth storred user
 			gui: (True) bool for prefer auth method
 			use_cache: (True) bool for use cache for requests
-			max_consistent_try: (5) int max try to get consistent list of pages
+			max_consistent_try: (20) int max try to get consistent list of pages
 			debug: (False) bool for print more data
 			callback_print: (Optional)
 							def callback_print(string):
@@ -157,12 +178,39 @@ class ESI:
 								def write(char_name,data):
 									saved_data=json.dumps(data)
 									...
+			callback_cache_server: (Optional)
+							class callback_cache_server:
+								def Get(key):
+									...
+									return cache[key]
+								def Set(key,data):
+									...
+									cache[key]=data
+								def Del(key):
+									...
+								def Clear():
+									...
+								def Sync():
+									...
+								def Close():
+									...
+			callback_gui_window_class:
+							class callback_gui_window_class:
+								def show(title,url):
+									...
+								def destroy()
+									...
+
 		"""
 		self.settings=self.configure(settings)
 
 		self.gui = gui
 		self.use_cache = use_cache
+		
 		self.max_consistent_try = max_consistent_try
+
+		self.force_cache = False
+		self.repeat_max_try = 5
 
 		self.user_auth={}
 
@@ -174,6 +222,8 @@ class ESI:
 		self.random = ''
 		self.unique_state = ''
 
+		self.last_map_action=None
+		self.last_map_action_priority=['stop','skip']
 		self.window = None
 		self.WebServer = None
 
@@ -202,6 +252,11 @@ class ESI:
 			self.storage=callback_saved_data
 		else:
 			self.storage=ESIUserDataStorage()
+
+		if callable(callback_gui_window_class):
+			self.window=callback_gui_window_class
+		else:
+			self.window=ESIGUIWindow()
 
 		if type(name) == str:
 			self.get(name)
@@ -270,7 +325,8 @@ class ESI:
 				'base_auth_url':"https://login.eveonline.com/v2/oauth/authorize/",
 				'token_req_url':"https://login.eveonline.com/v2/oauth/token",
 				'jwks_url':'https://login.eveonline.com/oauth/jwks',
-				'user_agent':"ESI Class 0.1",
+				'gui_auth_window_name':'Login in EVE',
+				'user_agent':"eve-simple-esi library",
 				'esi_url':"esi.evetech.net/latest",
 				'esi_proto':"https",
 				'scopes':[],
@@ -400,7 +456,6 @@ class ESI:
 			res['error']=True
 		return res
 
-
 	def validate_headers(self,headers,validate_array):
 		if validate_array == None:
 			return True
@@ -439,7 +494,8 @@ class ESI:
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			content=data.content
 			headers=data.headers
-
+			status_code=data.status_code
+			return self.http_return_obj(False,status_code,content,headers,True)
 
 		if self.use_cache:	#Initialize Cache
 			uri_cache=self.cache.Get(uri_hash)
@@ -451,32 +507,39 @@ class ESI:
 				uri_cache=False
 
 
-		if not uri_cache:	#Request without cache data
+		if not uri_cache:	# Request without cache data
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			content=data.content
 			headers=data.headers
+			status_code=data.status_code
 			self.dbg('validating request data for',uri)
 			validated_headers=self.validate_headers(headers,validate_array)
-			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+			if ((status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
 				self.dbg('Add to cache',uri)
 
+		elif self.force_cache:	# Return data from cache without check
+			status_code=304
+			cached=True
+			content=json.dumps(uri_cache['data'])
+			headers=uri_cache['header']
 
 		else: # Request with cache data
 			etag=self.get_etag(etag,uri_cache)
 			data=self.send_esi_request_http(uri, etag=etag, body=body, method=method)
 			headers=data.headers
 			content=data.content
+			status_code=data.status_code
 			self.dbg('validating etag data for',uri)
 			validated_headers=self.validate_headers(headers,validate_array)
 
-			if data.status_code == 304:
+			if status_code == 304:
 				cached=True
 				content=json.dumps(uri_cache['data'])
 
-			if ((data.status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
+			if ((status_code in [200]) and (validated_headers) and (self.set_cache_data(uri_hash,content,headers)) ):
 				self.dbg('Add to cache',uri)
 
-		return self.http_return_obj(cached,data.status_code,content,headers,validated_headers)
+		return self.http_return_obj(cached,status_code,content,headers,validated_headers)
 
 	def send_cached_json(self, uri, body=None, etag=None, method='GET', validate_array=None):
 		data=self.send_cached_data(uri, body=body, etag=None, method=method, validate_array=validate_array)
@@ -492,7 +555,7 @@ class ESI:
 			try:
 				res=json.loads(data)
 			except:
-				return ['json error:',data.decode('utf-8')]
+				return ('json_error',data.decode('utf-8'))
 			return res
 
 	def send_esi_request_http(self, uri, etag, body=None, method='GET'):
@@ -621,11 +684,15 @@ class ESI:
 			return self.auth()
 		return None
 
-	def open_url(self):
-		self.window=webview.create_window('Auth', self.full_auth_url, width=580, height=1024) #580 x 1024
-		webview.start()
+	def stop_web_server(self):
 		if self.WebServer:
 			self.WebServer.shutdown()
+
+	def open_url(self):
+		self.window.show(self.settings['gui_auth_window_name'], self.full_auth_url)
+
+		self.stop_web_server()
+
 		if self.auth_code == '':
 			return False
 		return True
@@ -673,7 +740,7 @@ class ESI:
 	def clear_cache(self):
 		self.cache.Clear()
 
-	def param_creator(self,command,params,token=True):
+	def param_creator(self,command,params,token=False):
 		pattern = re.compile(r'({[^\}]+})')
 		splitted=pattern.split(command)
 		for i in range(len(splitted)):
@@ -687,7 +754,7 @@ class ESI:
 				splitted[i]=str(self.user_auth[var])
 			else:
 				self.dbg('Error, no variable {} in params'.format(var))
-				raise
+				return None
 		path="".join(splitted)
 		if token:
 			params.update({'token':self.refresh_token})
@@ -696,12 +763,27 @@ class ESI:
 		return uri
 
 	def op_single(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False, validate_array=None):
-		if post:
-			method="POST"
-		uri=self.param_creator(command,params)
-		if raw:
-			return self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
-		return self.send_cached_json(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+		result=None
+		repeat=True
+		i=0
+		while ((i < self.repeat_max_try) and (repeat==True)):
+			i=i+1
+			if post:
+				method="POST"
+			if not method=="GET":
+				repeat=False
+			uri=self.param_creator(command,params)
+			if uri is None:
+				return None
+			if raw:
+				result=self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+				if not result['error']:
+					return self.send_cached_data(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+			else:
+				result=self.send_cached_json(uri, body=body, etag=etag, method=method, validate_array=validate_array)
+				if not type(result) is tuple:
+					return result
+		return result
 
 	def paged_data(self,data,obj):
 		if type(data) is list:
@@ -755,6 +837,8 @@ class ESI:
 			page_params=params.copy()
 			page_params['page']=i+1
 			uri=self.param_creator(command,page_params,token=False)
+			if uri is None:
+				return None
 			result_hash.append(self.uri_hash(uri))
 			page=self.op_single(command,params=page_params,method=method,body=body, raw=True, validate_array=validate_array)
 
@@ -821,6 +905,160 @@ class ESI:
 			return data
 		return data['data']
 
+	def list_filters_fields(self,data,query_array):
+		for query in query_array:
+			if self.list_filters_field(data,query[0],query[1],query[2]):
+				last_map_action=query[3]
+				if self.last_map_action == None:
+					self.last_map_action=last_map_action
+				elif self.last_map_action_priority.index(self.last_map_action) > self.last_map_action_priority.index(last_map_action):
+						self.last_map_action=last_map_action
+					
+
+	def list_filters_field(self,data,field_name,operator,compared_data):
+		if field_name in data:
+			if operator == '==':
+				return data[field_name] == compared_data
+			elif operator == '!=':
+				return (not (data[field_name] == compared_data))
+			elif operator == '>':
+				return data[field_name] > compared_data
+			elif operator == '<':
+				return data[field_name] < compared_data
+			elif operator == '>=':
+				return data[field_name] >= compared_data
+			elif operator == '<=':
+				return data[field_name] <= compared_data
+			elif operator == 'in':
+				return data[field_name] in compared_data
+			elif operator == 'not in':
+				return (not (data[field_name] in compared_data))
+			elif operator == 'startswith':
+				return data[field_name].startswith(compared_data)
+			elif operator == 'endswith':
+				return data[field_name].endswith(compared_data)
+			elif operator == 're':
+				return (not (compared_data.match(data[field_name]) == None))
+		return False
+
+	def map_obj (self,data,obj):
+		return_data={}
+		if self.last_map_action in ['skip','stop']:
+			return return_data
+
+		if 'fields' in obj:
+			if type(obj['fields']) is list:
+				for field in obj['fields']:
+					if field in data:
+						return_data[field]=data[field]
+			else:
+				return data[obj['fields']]
+
+		if self.last_map_action == 'stop':
+			return return_data
+
+		if 'id' in obj:
+			if (('params' in obj) and (obj['id'] in obj['params'])):
+				return_data.update({obj['id']:obj['params'][obj['id']]})
+			elif obj['id'] in self.user_auth:
+				return_data.update({obj['id']:self.user_auth[obj['id']]})
+		if 'map' in obj:
+			for field in obj['map']:
+				if not (field in data):
+					continue
+				n_param={}
+				if field in data:
+					n_param[field]=data[field]
+				new_obj=obj['map'][field].copy()
+				
+				if 'link' in obj['map'][field]:
+					n_param[obj['map'][field]['link']]=n_param[field]
+					new_obj['id']=new_obj['link']
+					del n_param[field]
+					del new_obj['link']
+				else:
+					new_obj['id']=field
+					
+				if 'params' in obj['map'][field]:
+					n_param.update(obj['map'][field]['params'])
+					del new_obj['params']
+
+				new_obj['params']=n_param
+				if self.last_map_action == 'stop':
+					return return_data
+				if 'name' in obj['map'][field]:
+					return_data[obj['map'][field]['name']]=self.map(new_obj,first=False)
+				else:
+					return_data[field]=self.map(new_obj,first=False)
+		return return_data
+
+	def map_list (self,data,obj):
+		return_data=[]
+		
+		for field in data:
+			if 'list_filters' in obj:
+				self.list_filters_fields(field,obj['list_filters'])
+			if self.last_map_action == 'stop':
+				return return_data
+			if self.last_map_action == 'skip':
+				self.last_map_action=None
+				continue
+			return_data.append(self.map_check(field,obj))
+		return return_data
+
+	def map_check (self,data,obj):
+		if self.last_map_action == 'stop':
+			return None
+		if type(data) is dict:
+			return_data=self.map_obj(data,obj)
+		elif type(data) is list:
+			return_data=self.map_list(data,obj)
+		elif 'link' in obj:
+			new_obj=obj.copy()
+			if not 'params' in obj:
+				new_obj['params']={}
+			new_obj['params'][obj['link']]=data
+			return_data=self.map(new_obj,first=False)
+		else:
+			return_data=data
+		return return_data
+
+	def make_flags(self,flags):
+		self_flags=dir(self)
+		prev_state={}
+		for flag in flags:
+			if flag in self_flags:
+				prev_state[flag]=getattr(self,flag)
+				setattr(self,flag,True)
+		return prev_state
+
+	def return_state(self,flags):
+		self_flags=dir(self)
+		for flag in flags:
+			if flag in self_flags:
+				setattr(self,flag,flags[flag])
+
+	def map (self,obj,first=True):
+		params={}
+		if 'params' in obj:
+			params=obj['params']
+		command=None
+		method="GET"
+		if 'get' in obj:
+			command=obj['get']
+			method="GET"
+		prev_state={}
+		if 'flags' in obj:
+			prev_state=self.make_flags(obj['flags'])
+		data=self.op(command,params=params,method=method)
+
+		if 'flags' in obj:
+			self.return_state(prev_state)
+		return_data=self.map_check(data,obj)
+		if first:
+			self.last_map_action=None
+		return return_data
+
 	def op(self,command,params={},post=False,etag=None,method="GET",body=None,raw=False,single=False):
 		if ((post) and (method=="GET")):
 			method="POST"
@@ -829,6 +1067,8 @@ class ESI:
 			return self.op_single(command,params=params,post=post,etag=etag,method=method,body=body,raw=raw)
 
 		first=self.op_single(command,params=params,method=method,body=body, raw=True)
+		if first is None:
+			return None
 		data=self.json(first['data'])
 
 		if type(data) is None:
