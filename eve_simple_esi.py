@@ -16,7 +16,6 @@ from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError, JWTClaimsError
 import shelve
 import hashlib
-import win32gui
 
 class ESICacheServer:
 	def __init__(self,file_name='cache.db'):
