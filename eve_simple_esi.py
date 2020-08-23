@@ -966,8 +966,7 @@ class ESI:
 				if not (field in data):
 					continue
 				n_param={}
-				if field in data:
-					n_param[field]=data[field]
+				n_param[field]=data[field]
 				new_obj=obj['map'][field].copy()
 				
 				if 'link' in obj['map'][field]:
