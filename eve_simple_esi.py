@@ -123,11 +123,15 @@ class ESIUserDataStorage:
 
 class ESIGUIWindow:
 	def __init__(self):
-		self.guilib = webview.initialize(None)
+		from webview.platforms.cef import settings
+		settings.update({
+			'persist_session_cookies': True
+		})
+		self.guilib = webview.initialize('cef')
 	
 	def show(self,title, url=None, html=None, js_api=None, width=580, height=1024, x=None, y=None, resizable=True, fullscreen=False, min_size=(200, 100), hidden=False, frameless=False, easy_drag=True, minimized=False, on_top=True, confirm_close=False, background_color='#FFFFFF', transparent=False, text_select=False):
 		self.window=webview.create_window(title,url=url, html=html, js_api=js_api, width=width, height=height, x=x, y=y, resizable=resizable, fullscreen=fullscreen, min_size=min_size, hidden=hidden, frameless=frameless, easy_drag=easy_drag, minimized=minimized, on_top=on_top, confirm_close=confirm_close, background_color=background_color, transparent=transparent, text_select=text_select) #580 x 1024
-		self.window._initialize(self.guilib, False, False)
+		self.window._initialize(self.guilib, False , False)
 		self.guilib.create_window(self.window)
 
 	def destroy(self):
