@@ -300,7 +300,8 @@ class ESI:
 				self.access_token,
 				jwk_set,
 				algorithms=jwk_set["alg"],
-				issuer=self.settings['login_host']
+				issuer=self.settings['login_host'],
+				audience="EVE Online"
 			)
 		except ExpiredSignatureError:
 			self.p("The JWT token has expired: {}")
@@ -653,7 +654,8 @@ class ESI:
 		self.character_name = validated_jwt["name"]
 		self.expired = validated_jwt["exp"]
 		self.settings['client_id'] = validated_jwt["azp"]
-		self.scope = self.combine_client_scopes(validated_jwt["scp"])
+		if "scp" in validated_jwt:
+			self.scope = self.combine_client_scopes(validated_jwt["scp"])
 
 	def auth_object(self):
 		self.user_auth={
