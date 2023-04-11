@@ -306,9 +306,6 @@ class ESI:
 		except ExpiredSignatureError:
 			self.p("The JWT token has expired: {}")
 			return None
-		except JWTError as e:
-			self.p("The JWT signature was invalid: {}").format(str(e))
-			return None
 		except JWTClaimsError as e:
 			try:
 				return jwt.decode(
@@ -321,6 +318,9 @@ class ESI:
 				self.p("The issuer claim was not from login.eveonline.com or "
 					"https://login.eveonline.com: {}".format(str(e)))
 				return None
+		except JWTError as e:
+			self.p("The JWT signature was invalid: {}").format(str(e))
+			return None
 
 	def configure(self,settings):
 		default_settings={
