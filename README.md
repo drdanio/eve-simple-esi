@@ -6,10 +6,10 @@ The Python 3+ library for simple and **fast** work with https://esi.evetech.net 
 
 ## This library can:
 
-- locally autorize with eve-online user (with gui and without gui interfase)
-- automatically refresh autorization without gui
-- get data (include data require autorization)
-- post data (include data require autorization)
+- locally autorize with eve-online user (with gui and without gui interface)
+- automatically refresh authorization without gui
+- get data (include data require authorization)
+- post data (include data require authorization)
 
 ## install:
 
@@ -19,7 +19,7 @@ pip install eve-simple-esi
 ```
 
 ### manual:
-Just put eve_simple_esi.py to directory with your project
+Just put eve_simple_esi.py in the directory with your project
 
 ## how to use:
 
@@ -84,7 +84,7 @@ Just put eve_simple_esi.py to directory with your project
 	```python
 	ESI.gui_auth()
 	```
-	The builtin webserver starts only when needed for authorization and automatically shutdown when no authorization jobs found
+	The builtin webserver starts only when needed for authorization and automatically shuts down when no authorization jobs found
 
 
 
